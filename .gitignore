@@ -1,0 +1,11 @@
+# Build output
+bin/
+obj/
+.vs/
+*.user
+
+# Release zips (built by Package-Release.ps1)
+release/
+
+# Never commit server settings: they hold the bot token, webhooks and Steam key
+*.cfg
