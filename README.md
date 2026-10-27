@@ -163,6 +163,7 @@ Right-click and **Copy ID** on:
 | Setting | Default | |
 |---|---|---|
 | Webhook URL | *(empty)* | The notifications webhook. |
+| Is Server | true | Turn off on a test or single-player copy of your setup: the server starting, online, stopping and offline posts are skipped. |
 | Server Launching | true | 🟡 Starting up |
 | Server Online | true | 🟢 Online |
 | Server Stopping | true | 🟠 Shutting down |
@@ -228,6 +229,7 @@ Shouts from players with the mod also reach Discord when they're alone on the se
 
 - **Only shouts are relayed, not normal chat.** Normal chat only reaches players standing nearby and never goes through the server, so there's nothing to relay. Shouts go to everyone.
 - **Old Discord messages aren't replayed.** When the server starts, it only picks up messages sent from then on.
+- **Testing on a copy of your setup?** Set `Is Server = false` in that copy's server settings, so your test loads don't post "server online" and "offline" to your Discord.
 - **Hosting from your own game works too.** The host counts as a player for every command except kick and ban.
 - **DarwinAwards** is optional. With it, deaths get its messages. Without it, the bridge writes its own.
 - **ServerRestart** isn't needed, but it has its own Discord webhook setting. Point it at your notifications webhook and its restart warnings land next to the bridge's status posts.

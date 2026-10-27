@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- New setting `[3 - Notifications] Is Server`. Turn it off on a test or single-player copy and the server starting, online, stopping and offline posts are skipped, so testing doesn't post them to your Discord. Chat, deaths and commands still work.
+
 ## 1.0.0
 
 First release.

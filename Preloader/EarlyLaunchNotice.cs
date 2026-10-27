@@ -35,6 +35,7 @@ namespace CaveheimDiscordBridge.Preloader
                 Dictionary<string, string> notifications = ReadSection(cfg, "3 - Notifications");
                 if (!notifications.TryGetValue("Webhook URL", out string url) || string.IsNullOrWhiteSpace(url)) return;
                 if (notifications.TryGetValue("Server Launching", out string on) && !on.Equals("true", StringComparison.OrdinalIgnoreCase)) return;
+                if (notifications.TryGetValue("Is Server", out string isServer) && !isServer.Equals("true", StringComparison.OrdinalIgnoreCase)) return;
 
                 AppDomain.CurrentDomain.SetData(SentFlag, true);
                 const string json = "{\"allowed_mentions\":{\"parse\":[]},\"content\":\"🟡 **Server is starting up…**\"}";

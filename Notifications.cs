@@ -13,12 +13,12 @@ namespace CaveheimDiscordBridge
 
         internal static void ServerLaunching()
         {
-            if (S.NotifyLaunch.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟡 **Server is starting up…**");
+            if (S.IsServer.Value && S.NotifyLaunch.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟡 **Server is starting up…**");
         }
 
         internal static void ServerStopped()
         {
-            if (!s_online || !S.NotifyStopped.Value) return;
+            if (!s_online || !S.IsServer.Value || !S.NotifyStopped.Value) return;
             s_online = false;
             Discord.WebhookNow(S.NotifyWebhook.Value, "🔴 **Server is offline.**");
         }
@@ -34,7 +34,7 @@ namespace CaveheimDiscordBridge
                 s_online = true;
                 s_stopping = false;
                 s_joined.Clear();
-                if (S.NotifyStarted.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟢 **Server is online!** Come on in.");
+                if (S.IsServer.Value && S.NotifyStarted.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟢 **Server is online!** Come on in.");
             }
         }
 
@@ -55,7 +55,7 @@ namespace CaveheimDiscordBridge
             {
                 if (S == null || !__instance.IsServer() || s_stopping) return;
                 s_stopping = true;
-                if (S.NotifyStopping.Value) Discord.WebhookNow(S.NotifyWebhook.Value, "🟠 **Server is shutting down…**");
+                if (S.IsServer.Value && S.NotifyStopping.Value) Discord.WebhookNow(S.NotifyWebhook.Value, "🟠 **Server is shutting down…**");
             }
 
             // Shutdown has saved the world and dropped every player: the server is gone from here on. Sent now rather

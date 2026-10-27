@@ -20,7 +20,7 @@ namespace CaveheimDiscordBridge
     {
         public const string ModGUID = "TheCaveman.CavemansDiscordBridge";
         public const string ModName = "Caveman's Discord Bridge";
-        public const string ModVersion = "1.0.0";
+        public const string ModVersion = "1.0.1";
 
         internal static DiscordBridgePlugin Instance;
         internal static ManualLogSource Log;
@@ -105,6 +105,7 @@ namespace CaveheimDiscordBridge
         public readonly ConfigEntry<string> IgnoredShouts;
 
         public readonly ConfigEntry<string> NotifyWebhook;
+        public readonly ConfigEntry<bool> IsServer;
         public readonly ConfigEntry<bool> NotifyLaunch, NotifyStarted, NotifyStopping, NotifyStopped;
         public readonly ConfigEntry<bool> NotifyJoin, NotifyLeave;
         public readonly ConfigEntry<bool> NotifyDeaths;
@@ -141,6 +142,8 @@ namespace CaveheimDiscordBridge
                 "Players with the client part can send screenshots (screenshot key) to the chat channel.");
 
             NotifyWebhook = cfg.Bind("3 - Notifications", "Webhook URL", "", "Webhook for server and player notifications.");
+            IsServer = cfg.Bind("3 - Notifications", "Is Server", true,
+                "Turn off on a test or single-player copy: the server starting, online, stopping and offline posts are skipped, so testing doesn't post them to your Discord. Chat, deaths and commands still work.");
             NotifyLaunch = cfg.Bind("3 - Notifications", "Server Launching", true, "The server process has started.");
             NotifyStarted = cfg.Bind("3 - Notifications", "Server Online", true, "The world has loaded and players can join.");
             NotifyStopping = cfg.Bind("3 - Notifications", "Server Stopping", true, "The server has begun shutting down.");
