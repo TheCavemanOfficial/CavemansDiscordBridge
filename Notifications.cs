@@ -18,8 +18,11 @@ namespace CaveheimDiscordBridge
 
         internal static void ServerStopped()
         {
-            if (!s_online || !S.IsServer.Value || !S.NotifyStopped.Value) return;
+            if (!s_online || !S.IsServer.Value) return;
             s_online = false;
+            CommandLog.FlushNow();
+            AdminPanel.Offline();
+            if (!S.NotifyStopped.Value) return;
             Discord.WebhookNow(S.NotifyWebhook.Value, "🔴 **Server is offline.**");
         }
 
@@ -35,6 +38,8 @@ namespace CaveheimDiscordBridge
                 s_stopping = false;
                 s_joined.Clear();
                 if (S.IsServer.Value && S.NotifyStarted.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟢 **Server is online!** Come on in.");
+                if (S.IsServer.Value) AdminPanel.Start();
+                Maintenance.ApplyFile();
             }
         }
 

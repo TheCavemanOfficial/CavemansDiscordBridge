@@ -16,6 +16,7 @@ namespace CaveheimDiscordBridge
     internal static class ChatBridge
     {
         private static readonly int s_chatHash = "ChatMessage".GetStableHashCode();
+        private static readonly int s_sayHash = "Say".GetStableHashCode();
         private static readonly int s_darwinHash = "DarwinAwards IDied".GetStableHashCode();
         private const int ShoutType = 2;   // Talker.Type.Shout
 
@@ -45,6 +46,7 @@ namespace CaveheimDiscordBridge
             try
             {
                 if (data.m_methodHash == s_chatHash) ReadShout(data);
+                else if (data.m_methodHash == s_sayHash) ReadSay(data);
                 else if (data.m_methodHash == s_darwinHash) ReadDeath(data);
             }
             catch (Exception ex) { DiscordBridgePlugin.Log.LogDebug($"Couldn't read a routed message: {ex.Message}"); }
@@ -58,7 +60,37 @@ namespace CaveheimDiscordBridge
             string name = pkg.ReadString();
             string platformId = pkg.ReadString();
             string text = pkg.ReadString();
-            if (type == ShoutType) ShoutToDiscord(data.m_senderPeerID, name, text, SteamAvatars.FromPlatformId(platformId));
+            if (type != ShoutType) return;
+            if (GameCommand(data.m_senderPeerID, text)) return;
+            ShoutToDiscord(data.m_senderPeerID, name, text, SteamAvatars.FromPlatformId(platformId));
+        }
+
+        // Normal chat ("Say") goes player to player through the server; only read for chat commands
+        private static void ReadSay(ZRoutedRpc.RoutedRPCData data)
+        {
+            var pkg = new ZPackage(data.m_parameters.GetArray());
+            pkg.ReadInt();      // type
+            pkg.ReadString();   // name
+            pkg.ReadString();   // platform ID
+            GameCommand(data.m_senderPeerID, pkg.ReadString());
+        }
+
+        /// <summary>
+        /// A chat command typed in game by a player without the client part (with it, the line never leaves their game
+        /// and comes as CDB_Command instead). Answered once however many copies pass through.
+        /// </summary>
+        internal static bool GameCommand(long sender, string text)
+        {
+            string reply = Commands.GameCommand(sender, text);
+            if (reply == null) return false;
+
+            float now = Time.realtimeSinceStartup;
+            string key = "cmd\n" + sender + "\n" + text.Trim();
+            if (s_recent.TryGetValue(key, out float at) && now - at < 3f) return true;
+            s_recent[key] = now;
+            CommandLog.Write("game chat", ClientPart.PlayerName(sender), text.Trim(), reply);
+            ClientPart.Reply(sender, reply);
+            return true;
         }
 
         private static void ReadDeath(ZRoutedRpc.RoutedRPCData data)
@@ -131,6 +163,15 @@ namespace CaveheimDiscordBridge
             string text = Clean(msg.content);
             if (text.Length == 0) return;
 
+            // Chat commands are answered in the channel and stay out of the game
+            string reply = Commands.ChatCommand(msg.content, forDiscord: true);
+            if (reply != null)
+            {
+                CommandLog.Write("chat channel", $"{msg.author.username} ({msg.author.id})", msg.content.Trim(), reply);
+                CommandLog.ReplyThenClean(DiscordBridgePlugin.Server.ChatChannelId.Value, msg.id, reply, keep: false);
+                return;
+            }
+
             // The config trims trailing spaces, so the gap after the prefix is added here
             string prefix = DiscordBridgePlugin.Server.InGamePrefix.Value.Trim();
             var user = new UserInfo { Name = (prefix.Length > 0 ? prefix + " " : "") + Clean(author), UserId = s_discordUser };
@@ -140,6 +181,16 @@ namespace CaveheimDiscordBridge
                 // Far below the world, so no shout bubble appears over anyone's head
                 ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ChatMessage", new Vector3(0f, -10000f, 0f), ShoutType, user, text);
             }
+            finally { s_injecting = false; }
+        }
+
+        /// <summary>A shout from the server itself (restart warnings) that isn't sent back to Discord.</summary>
+        internal static void ServerShout(string name, string text)
+        {
+            if (ZRoutedRpc.instance == null || string.IsNullOrWhiteSpace(text)) return;
+            var user = new UserInfo { Name = Clean(name), UserId = s_discordUser };
+            s_injecting = true;
+            try { ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.Everybody, "ChatMessage", new Vector3(0f, -10000f, 0f), ShoutType, user, Clean(text)); }
             finally { s_injecting = false; }
         }
 

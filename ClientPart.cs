@@ -28,6 +28,8 @@ namespace CaveheimDiscordBridge
         // ---------------- client side
         private static bool s_serverHasBridge;
         private static bool s_screensAllowed;
+        private static string s_commandPrefix;
+        private static readonly HashSet<string> s_commands = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static float s_lastShot = -100f;
         private static int s_uploadId;
 
@@ -39,18 +41,22 @@ namespace CaveheimDiscordBridge
                 s_clients.Clear();
                 s_uploads.Clear();
                 s_serverHasBridge = false;
+                s_commands.Clear();
                 ZRoutedRpc rpc = ZRoutedRpc.instance;
                 if (__instance.IsServer())
                 {
                     rpc.Register<bool>("CDB_Hello", RPC_Hello);
                     rpc.Register<string, string>("CDB_Shout", RPC_Shout);
                     rpc.Register<int, int, int, string, ZPackage>("CDB_ShotPart", RPC_ShotPart);
+                    rpc.Register<string>("CDB_Command", RPC_Command);
                 }
                 // A hosting player is both: register the client side too
                 if (!__instance.IsDedicated())
                 {
                     rpc.Register<bool>("CDB_Welcome", RPC_Welcome);
                     rpc.Register<string, float>("CDB_RaiseSkill", RPC_RaiseSkill);
+                    rpc.Register<string, string>("CDB_Commands", RPC_Commands);
+                    rpc.Register<string>("CDB_Reply", RPC_Reply);
                 }
             }
         }
@@ -62,6 +68,31 @@ namespace CaveheimDiscordBridge
             s_clients[sender] = deathShots;
             ServerSettings s = DiscordBridgePlugin.Server;
             ZRoutedRpc.instance.InvokeRoutedRPC(sender, "CDB_Welcome", s != null && s.AllowScreenshots.Value);
+            // Which chat lines are commands, so the client can send them here instead of saying them out loud.
+            // A separate message, so 1.0.x clients (which don't know it) still get their welcome.
+            if (s != null) ZRoutedRpc.instance.InvokeRoutedRPC(sender, "CDB_Commands", s.CommandPrefix.Value ?? "!", string.Join(",", Commands.AllNames));
+        }
+
+        private static void RPC_Command(long sender, string text)
+        {
+            string reply = Commands.GameCommand(sender, text) ?? "Unknown command.";
+            CommandLog.Write("game chat", PlayerName(sender), text, reply);
+            Reply(sender, reply);
+        }
+
+        internal static string PlayerName(long peer)
+        {
+            ZNetPeer p = ZNet.instance?.GetPeer(peer);
+            if (p != null) return p.m_playerName;
+            return Player.m_localPlayer != null && peer == ZNet.GetUID() ? Player.m_localPlayer.GetPlayerName() : "peer " + peer;
+        }
+
+        /// <summary>Answers a player's chat command: into their chat with the client part, else as a top-left message.</summary>
+        internal static void Reply(long peer, string text)
+        {
+            if (ZRoutedRpc.instance == null || string.IsNullOrEmpty(text)) return;
+            if (HasClient(peer)) ZRoutedRpc.instance.InvokeRoutedRPC(peer, "CDB_Reply", text);
+            else ZRoutedRpc.instance.InvokeRoutedRPC(peer, "ShowMessage", (int)MessageHud.MessageType.TopLeft, text);
         }
 
         private static void RPC_Shout(long sender, string name, string text) => ChatBridge.ShoutToDiscord(sender, name, text, null);
@@ -120,6 +151,33 @@ namespace CaveheimDiscordBridge
             s_screensAllowed = screensAllowed;
         }
 
+        private static void RPC_Commands(long sender, string prefix, string names)
+        {
+            s_commandPrefix = prefix;
+            s_commands.Clear();
+            foreach (string n in names.Split(',')) if (n.Trim().Length > 0) s_commands.Add(n.Trim());
+        }
+
+        private static void RPC_Reply(long sender, string text) => Chat.instance?.AddString("Server", text, Talker.Type.Whisper);
+
+        // A chat command goes to the server only, instead of being said (or shouted) to everyone
+        [HarmonyPatch(typeof(Chat), nameof(Chat.SendText))]
+        private static class SendCommand
+        {
+            [HarmonyPriority(Priority.First)]
+            private static bool Prefix(string text)
+            {
+                if (!s_serverHasBridge || s_commands.Count == 0 || string.IsNullOrEmpty(s_commandPrefix) || text == null) return true;
+                string t = text.Trim();
+                if (!t.StartsWith(s_commandPrefix, StringComparison.Ordinal)) return true;
+                string rest = t.Substring(s_commandPrefix.Length).TrimStart();
+                int space = rest.IndexOf(' ');
+                if (!s_commands.Contains(space < 0 ? rest : rest.Substring(0, space))) return true;
+                ZRoutedRpc.instance.InvokeRoutedRPC("CDB_Command", t);
+                return false;
+            }
+        }
+
         private static void RPC_RaiseSkill(long sender, string skill, float amount)
         {
             if (Player.m_localPlayer == null) return;
@@ -165,7 +223,6 @@ namespace CaveheimDiscordBridge
         {
             yield return new WaitForEndOfFrame();
             Texture2D shot = null, small = null;
-            RenderTexture rt = null;
             byte[] jpg;
             try
             {
@@ -174,15 +231,11 @@ namespace CaveheimDiscordBridge
                 int w = Math.Min(1280, shot.width), h = Mathf.RoundToInt(shot.height * (w / (float)shot.width));
                 if (w != shot.width)
                 {
-                    // sRGB like the screen itself: a linear target washed the shots out (far too bright)
-                    rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
-                    Graphics.Blit(shot, rt);
-                    RenderTexture prev = RenderTexture.active;
-                    RenderTexture.active = rt;
+                    // Shrunk on the CPU from the raw bytes: any GPU blit/ReadPixels round trip went through a
+                    // linear/sRGB conversion and washed the shots out (too bright, even with an sRGB target)
                     small = new Texture2D(w, h, TextureFormat.RGB24, false);
-                    small.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                    small.SetPixels32(Downscale(shot.GetPixels32(), shot.width, shot.height, w, h));
                     small.Apply();
-                    RenderTexture.active = prev;
                 }
                 jpg = (small ?? shot).EncodeToJPG(80);
             }
@@ -193,7 +246,6 @@ namespace CaveheimDiscordBridge
             }
             finally
             {
-                if (rt != null) RenderTexture.ReleaseTemporary(rt);
                 if (shot != null) UnityEngine.Object.Destroy(shot);
                 if (small != null) UnityEngine.Object.Destroy(small);
             }
@@ -208,6 +260,33 @@ namespace CaveheimDiscordBridge
                 ZRoutedRpc.instance.InvokeRoutedRPC("CDB_ShotPart", id, i, count, kind, new ZPackage(part));
                 yield return null;   // one part a frame, so a big shot never stalls the connection
             }
+        }
+
+        // Box filter: each output pixel is the average of the source pixels it covers, so nothing is lost or shifted
+        private static Color32[] Downscale(Color32[] src, int sw, int sh, int w, int h)
+        {
+            var dst = new Color32[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                int y0 = y * sh / h, y1 = Math.Max(y0 + 1, (y + 1) * sh / h);
+                for (int x = 0; x < w; x++)
+                {
+                    int x0 = x * sw / w, x1 = Math.Max(x0 + 1, (x + 1) * sw / w);
+                    int r = 0, g = 0, b = 0;
+                    for (int sy = y0; sy < y1; sy++)
+                    {
+                        int row = sy * sw;
+                        for (int sx = x0; sx < x1; sx++)
+                        {
+                            Color32 c = src[row + sx];
+                            r += c.r; g += c.g; b += c.b;
+                        }
+                    }
+                    int n = (y1 - y0) * (x1 - x0);
+                    dst[y * w + x] = new Color32((byte)(r / n), (byte)(g / n), (byte)(b / n), 255);
+                }
+            }
+            return dst;
         }
     }
 }

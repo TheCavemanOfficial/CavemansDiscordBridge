@@ -1,5 +1,7 @@
 # Caveman's Discord Bridge
 
+[![Donate](https://img.shields.io/badge/PayPal-Donate-0070BA?logo=paypal&logoColor=white)](https://www.paypal.biz/xXIvIercenaryXx)
+
 Hook your Valheim server up to your Discord. Shouts show up in a Discord channel, and messages typed in that channel show up in game. You also get server status posts, a death feed and a handful of admin commands you can run from Discord.
 
 It runs on the server. Players don't need to install anything. If they do install it, they get a few extras (death screenshots and a screenshot key), but nobody is left out without it.
@@ -27,6 +29,15 @@ Built for my own server, Caveheim, and shared because it might be useful to your
 - Uses DarwinAwards' death messages if you have that mod.
 - Without it, the bridge spots deaths itself and posts its own line ("Bjorn has fallen in the Black Forest.").
 - Players who have the mod installed send a screenshot from the moment they died, attached to the post.
+
+**Scheduled restarts**
+- Restart times every day, with warnings at whatever minutes you pick before each one: on screen, in game chat and on Discord.
+- Optional ServerCharacters maintenance mode just before, and optionally the shutdown itself.
+- Moving from Tristan's ServerRestart? Its settings are copied over automatically the first time.
+
+**Admin panel**
+- One live message in a private channel: online or offline, who's on, uptime, next restart.
+- Buttons for restart (now or in a few minutes), maintenance mode (only admins can join; ServerCharacters' when installed), skip the next restart (only when Shut Down is on: otherwise your host restarts on its own schedule), save, broadcast, and kick / ban / unban. Admins only, and the risky ones ask first.
 
 **Admin commands from Discord**
 - Kick, ban, teleport, give items, broadcast messages and more, from a channel of your choosing.
@@ -183,16 +194,51 @@ Right-click and **Copy ID** on:
 | Prefix | ! | What every command starts with. |
 | Admin User IDs | *(empty)* | Discord user IDs, comma separated. Use IDs, not names: names can be copied, IDs can't. |
 
+### 5 - Restarts
+
+| Setting | Default | |
+|---|---|---|
+| Enabled | true | Scheduled restarts on or off. They stay off while Tristan's ServerRestart is installed. |
+| Schedule (UTC) | 04:00,16:00 | Daily restart times in UTC, comma separated. |
+| Shut Down | false | Save, disconnect everyone and quit at the restart time. Leave off if your host restarts the server on the same schedule. |
+| Warning Minutes | 60,30,10,5,4,3,2,1 | Minutes before each restart to warn at. Any numbers work. |
+| Warning Message | Server restart in {time} | `{time}` becomes "1 hour", "30 minutes", "1 hour 30 minutes"… |
+| Screen Format | {0} | The on-screen message (`{0}` = the warning). Empty skips it. |
+| Send To Chat | true | Also shout the warning in game chat. |
+| Chat Name | Restart | Who the chat warning comes from. |
+| Chat Format | {0} | The chat warning. |
+| Webhook URL | *(empty)* | Where warnings go on Discord. Empty means none. |
+| Discord Name | Restart | The name warnings post under. |
+| Discord Format | ⏰ \*\*{0}\*\* | The Discord warning. |
+| Maintenance Mode | false | ServerCharacters maintenance (admins only) before each restart. |
+| Maintenance Minutes | 7 | How long before the restart it starts. |
+| Log Period Seconds | 0 | How often to log the next restart time. 0 = only when it changes. |
+| Imported From ServerRestart | false | Turns true once `org.tristan.serverrestart.cfg` was copied in. Set it back to false to copy again. |
+
+Changes to this section apply without restarting the server.
+
+### 6 - Admin Panel
+
+| Setting | Default | |
+|---|---|---|
+| Enabled | true | The panel on or off. |
+| Channel ID | *(empty)* | The channel the panel lives in. Use a private admin channel. Empty turns it off. |
+| Update Seconds | 60 | How often it refreshes on its own (it also refreshes when players come or go). |
+| Message ID | *(empty)* | Filled in by the mod. Clear it, or delete the panel message, to get a fresh one. |
+
+Only the users in `[4 - Commands] Admin User IDs` can use the buttons. Maintenance mode keeps the server running and lets only admins join (it uses ServerCharacters' maintenance mode when that is installed); it lasts through restarts until you end it. The bot needs Send Messages and Embed Links in the panel channel.
+
 ---
 
 ## Commands
 
-Type these in your command channel. `help` and `players` work for anyone who can see the channel. Everything else is for the admins you listed.
+Type these in your command channel. `help` and `restart` work for anyone who can see the channel. Everything else is for the admins you listed.
 
 | Command | What it does |
 |---|---|
 | `!help` | Lists every command. |
 | `!players` | Who's online, with their biome and coordinates. |
+| `!restart` | When the next scheduled restart is. Anyone can use it, also in the chat channel and in game chat. |
 | `!save` | Saves the world and every character. |
 | `!broadcast <message>` | Shows a message in the middle of everyone's screen. |
 | `!kick <player>` | Kicks a player. |
@@ -258,3 +304,4 @@ Everything the bridge does is in `BepInEx/LogOutput.log`, on lines starting with
 ## Links
 
 - Source and issues: [github.com/TheCavemanOfficial/CavemansDiscordBridge](https://github.com/TheCavemanOfficial/CavemansDiscordBridge)
+- Help and feedback: [The Cavemen Discord](https://discord.gg/AsMznrVvM)

@@ -91,7 +91,7 @@ namespace CaveheimDiscordBridge
             if (!s_queue.TryAdd(item)) DiscordBridgePlugin.Log.LogWarning("Discord queue full; a message was dropped.");
         }
 
-        private static string MessageJson(string content, string username, string avatarUrl = null)
+        internal static string MessageJson(string content, string username, string avatarUrl = null)
         {
             var sb = new StringBuilder("{\"allowed_mentions\":{\"parse\":[]}");
             if (!string.IsNullOrEmpty(content)) sb.Append(",\"content\":").Append(Quote(Truncate(content, 2000)));
@@ -159,6 +159,120 @@ namespace CaveheimDiscordBridge
             }
         }
 
+        /// <summary>
+        /// One bot API call, on the calling (background) thread: returns the HTTP status and the reply body. Rate limits
+        /// are waited out once. For the admin panel, which needs the message ID back and edits messages in place.
+        /// </summary>
+        internal static int BotCall(string method, string path, string json, out string body, bool urgent = false)
+        {
+            body = null;
+            ServerSettings s = DiscordBridgePlugin.Server;
+            if (s_http == null || s == null || string.IsNullOrWhiteSpace(s.BotToken.Value)) return 0;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                using (var request = new HttpRequestMessage(new HttpMethod(method), path.StartsWith("http") ? path : Api + path))
+                using (var cts = urgent ? new CancellationTokenSource() : CancellationTokenSource.CreateLinkedTokenSource(s_stop.Token))
+                {
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bot", s.BotToken.Value.Trim());
+                    if (json != null) request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                    cts.CancelAfter(urgent ? TimeSpan.FromSeconds(4) : TimeSpan.FromSeconds(15));
+                    using (HttpResponseMessage response = s_http.SendAsync(request, cts.Token).GetAwaiter().GetResult())
+                    {
+                        body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        if ((int)response.StatusCode == 429 && attempt == 0 && !urgent)
+                        {
+                            s_stop.Token.WaitHandle.WaitOne(RetryAfter(response));
+                            continue;
+                        }
+                        return (int)response.StatusCode;
+                    }
+                }
+            }
+            return 429;
+        }
+
+        /// <summary>A webhook post with embeds (JSON) and text files attached. Sent off the main thread, once more if rate limited.</summary>
+        internal static void WebhookWithFiles(string url, string json, List<(string name, string text)> files) => PostWithFiles(url, false, json, files);
+
+        /// <summary>The same, posted by the bot in a channel.</summary>
+        internal static void BotWithFiles(string channelId, string json, List<(string name, string text)> files) =>
+            PostWithFiles($"{Api}/channels/{channelId.Trim()}/messages", true, json, files);
+
+        // The report first, then its files in a second message right under it (a reply, when the bot posts): Discord
+        // shows a message's files above its embed, which buried the readable report under the raw logs
+        private static void PostWithFiles(string url, bool bot, string json, List<(string name, string text)> files)
+        {
+            if (string.IsNullOrWhiteSpace(url) || s_http == null) return;
+            url = url.Trim();
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    string reportUrl = bot ? url : url + (url.Contains("?") ? "&" : "?") + "wait=true";
+                    if (!SendForm(reportUrl, bot, json, null, out string body)) return;
+                    if (files == null || files.Count == 0) return;
+
+                    string id = Json.Parse(body) is Dictionary<string, object> m ? m.Str("id") : null;
+                    var sb = new StringBuilder("{\"allowed_mentions\":{\"parse\":[]},\"content\":\"📎 Files for the report above\"");
+                    if (bot && id != null) sb.Append(",\"message_reference\":{\"message_id\":").Append(Quote(id)).Append(",\"fail_if_not_exists\":false}");
+                    SendForm(url, bot, sb.Append('}').ToString(), files, out _);
+                }
+                catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Discord report failed: {ex.Message}"); }
+            });
+        }
+
+        // One multipart post (JSON plus optional text files), once more if rate limited. True when Discord took it.
+        private static bool SendForm(string url, bool bot, string json, List<(string name, string text)> files, out string body)
+        {
+            body = null;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                using (var request = new HttpRequestMessage(HttpMethod.Post, url))
+                {
+                    if (bot) request.Headers.Authorization = new AuthenticationHeaderValue("Bot", DiscordBridgePlugin.Server.BotToken.Value.Trim());
+                    var form = new MultipartFormDataContent();
+                    form.Add(new StringContent(json, Encoding.UTF8, "application/json"), "payload_json");
+                    for (int i = 0; files != null && i < files.Count && i < 10; i++)
+                    {
+                        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(files[i].text ?? ""));
+                        file.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                        form.Add(file, $"files[{i}]", files[i].name);
+                    }
+                    request.Content = form;
+                    using (HttpResponseMessage response = s_http.SendAsync(request, s_stop.Token).GetAwaiter().GetResult())
+                    {
+                        body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                        if ((int)response.StatusCode == 429 && attempt == 0) { s_stop.Token.WaitHandle.WaitOne(RetryAfter(response)); continue; }
+                        if (response.IsSuccessStatusCode) return true;
+                        DiscordBridgePlugin.Log.LogWarning($"Discord refused a report ({(int)response.StatusCode}): {Truncate(body, 300)}");
+                        return false;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Answers a button click or form: Discord wants this within 3 seconds, so it skips the post queue.</summary>
+        internal static void InteractionReply(string id, string token, string json)
+        {
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    using (var request = new HttpRequestMessage(HttpMethod.Post, $"{Api}/interactions/{id}/{token}/callback"))
+                    {
+                        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+                        using (HttpResponseMessage response = s_http.SendAsync(request).GetAwaiter().GetResult())
+                        {
+                            if (!response.IsSuccessStatusCode)
+                                DiscordBridgePlugin.Log.LogWarning($"Discord refused a panel reply ({(int)response.StatusCode}): {Truncate(response.Content.ReadAsStringAsync().GetAwaiter().GetResult(), 300)}");
+                        }
+                    }
+                }
+                catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Panel reply failed: {ex.Message}"); }
+            });
+        }
+
         private static TimeSpan RetryAfter(HttpResponseMessage response)
         {
             double seconds = 1;
@@ -169,7 +283,7 @@ namespace CaveheimDiscordBridge
 
         // --------------------------------------------------------------------- reading
 
-        internal class DiscordMessage { public string id; public string content; public string webhook_id; public Author author; }
+        internal class DiscordMessage { public string id; public string content; public string webhook_id; public int type; public Author author; }
         internal class Author { public string id; public string username; public string global_name; public bool bot; }
 
         private static DiscordMessage[] ReadMessages(string body)
@@ -185,6 +299,7 @@ namespace CaveheimDiscordBridge
                     id = o.Str("id"),
                     content = o.Str("content"),
                     webhook_id = o.Str("webhook_id"),
+                    type = o.TryGetValue("type", out object t) && t is double td ? (int)td : 0,
                     author = a == null ? null : new Author { id = a.Str("id"), username = a.Str("username"), global_name = a.Str("global_name"), bot = a.Bool("bot") }
                 });
             }
@@ -246,6 +361,7 @@ namespace CaveheimDiscordBridge
                     foreach (DiscordMessage m in messages)
                     {
                         if (m.author == null || m.author.bot || !string.IsNullOrEmpty(m.webhook_id)) continue;   // our own posts, other bots
+                        if (m.type != 0 && m.type != 19) continue;   // Discord's notices ("pinned a message", joins); 19 = a reply
                         if (string.IsNullOrWhiteSpace(m.content))
                         {
                             DiscordBridgePlugin.Log.LogWarning($"A message in channel {channelId} came through empty: turn on Message Content Intent for the bot.");

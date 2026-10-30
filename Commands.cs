@@ -25,7 +25,8 @@ namespace CaveheimDiscordBridge
         {
             // --- server basics
             ["help"] = new Command { Usage = "help", Help = "This list.", Run = Help },
-            ["players"] = new Command { Usage = "players", Help = "Who's online, and where.", Run = Players },
+            ["players"] = new Command { Usage = "players", Help = "Who's online, and where.", Admin = true, Run = Players },
+            ["restart"] = new Command { Usage = "restart", Help = "When the next scheduled restart is.", Run = NextRestart },
             ["save"] = new Command { Usage = "save", Help = "Save the world and every character now.", Admin = true, Run = Save },
             ["broadcast"] = new Command { Usage = "broadcast <message>", Help = "Show a message in the middle of everyone's screen.", Admin = true, Run = Broadcast },
             // --- moderation
@@ -51,19 +52,26 @@ namespace CaveheimDiscordBridge
             if (!content.StartsWith(prefix, StringComparison.Ordinal)) return;
 
             string[] parts = Split(content.Substring(prefix.Length));
+            string who = $"{msg.author.username} ({msg.author.id})";
+            void Answer(string text, bool keep = false)
+            {
+                CommandLog.Write("command channel", who, content, text);
+                CommandLog.ReplyThenClean(S.CommandChannelId.Value, msg.id, text, keep);
+            }
+
             if (parts.Length == 0 || !s_commands.TryGetValue(parts[0], out Command cmd))
             {
-                Reply($"Unknown command. Type `{prefix}help` for the list.");
+                Answer($"Unknown command. Type `{prefix}help` for the list.");
                 return;
             }
             if (cmd.Admin && !IsAdmin(msg.author.id))
             {
-                Reply("⛔ That command is for admins only.");
+                Answer("⛔ That command is for admins only.");
                 return;
             }
             if (ZNet.instance == null || !ZNet.instance.IsServer())
             {
-                Reply("The world isn't loaded yet.");
+                Answer("The world isn't loaded yet.");
                 return;
             }
             string result;
@@ -75,12 +83,30 @@ namespace CaveheimDiscordBridge
             }
             if (result == null) result = $"Usage: `{prefix}{cmd.Usage}`";
             DiscordBridgePlugin.Log.LogInfo($"[Discord] {msg.author.username} ran: {content}");
-            Reply(result);
+            // help stays, so it can be pinned
+            Answer(result, keep: cmd.Run == (Func<string[], string>)Help);
         }
 
-        private static void Reply(string text) => Discord.BotMessage(S.CommandChannelId.Value, text);
+        /// <summary>Runs one of the commands by name (the admin panel), on the main thread. Null when the arguments don't fit.</summary>
+        internal static string Execute(string name, params string[] args)
+        {
+            if (!s_commands.TryGetValue(name, out Command cmd)) return "Unknown command.";
+            if (ZNet.instance == null || !ZNet.instance.IsServer()) return "The world isn't loaded yet.";
+            try { return cmd.Run(args) ?? $"Usage: `{S.CommandPrefix.Value}{cmd.Usage}`"; }
+            catch (Exception ex)
+            {
+                DiscordBridgePlugin.Log.LogWarning($"Panel command '{name}' failed: {ex}");
+                return "❌ That didn't work: " + ex.Message;
+            }
+        }
 
-        private static bool IsAdmin(string userId) =>
+        /// <summary>Names of the players online, for the panel's player lists (the host is left out: it can't be kicked).</summary>
+        internal static List<string> OnlineNames() =>
+            ZNet.instance == null ? new List<string>() : Online().Where(t => !t.IsHost).Select(t => t.m_playerName).OrderBy(n => n).ToList();
+
+        internal static int OnlineCount() => ZNet.instance == null ? 0 : Online().Count;
+
+        internal static bool IsAdmin(string userId) =>
             !string.IsNullOrEmpty(userId) && S.AdminIds.Value.Split(',').Any(id => id.Trim() == userId);
 
         /// <summary>Splits on spaces, keeping "quoted names" together.</summary>
@@ -175,6 +201,84 @@ namespace CaveheimDiscordBridge
             foreach (Target p in peers.OrderBy(p => p.m_playerName))
                 sb.Append("• ").Append(Discord.EscapeMarkdown(p.m_playerName)).Append(" · ").Append(Where(p.GetRefPos())).Append('\n');
             return sb.ToString();
+        }
+
+        // ------------------------------------------------------------------ chat commands
+
+        /// <summary>Commands anyone can also use from game chat and the Discord chat channel.</summary>
+        internal static readonly string[] ChatCommands = { "restart" };
+
+        /// <summary>
+        /// The answer when a chat line ("!restart") is one of the chat commands, else null. Discord answers can use
+        /// Discord's own formatting (time stamps); game answers are plain text.
+        /// </summary>
+        internal static string ChatCommand(string text, bool forDiscord)
+        {
+            if (S == null || string.IsNullOrWhiteSpace(text)) return null;
+            string prefix = S.CommandPrefix.Value ?? "!";
+            string t = text.Trim();
+            if (prefix.Length == 0 || !t.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            string name = t.Substring(prefix.Length).Trim();
+            if (!ChatCommands.Contains(name, StringComparer.OrdinalIgnoreCase)) return null;
+
+            // Only "restart" so far
+            if (forDiscord) return NextRestart(null);
+            DateTime next = Restarts.Next;
+            return next == default ? "No restart is scheduled."
+                : $"Next restart in {Restarts.Span(next - DateTime.UtcNow)} ({next:HH:mm} UTC).";
+        }
+
+        /// <summary>Every command name, for the client part to recognise them in game chat.</summary>
+        internal static IEnumerable<string> AllNames => s_commands.Keys;
+
+        /// <summary>
+        /// A command typed in game chat: anyone can use the open ones, the admin ones need the player on the game's own
+        /// admin list (adminlist.txt). Null when the line isn't a command, so it stays ordinary chat.
+        /// </summary>
+        internal static string GameCommand(long sender, string text)
+        {
+            if (S == null || string.IsNullOrWhiteSpace(text)) return null;
+            string prefix = S.CommandPrefix.Value ?? "!";
+            string t = text.Trim();
+            if (prefix.Length == 0 || !t.StartsWith(prefix, StringComparison.Ordinal)) return null;
+            string[] parts = Split(t.Substring(prefix.Length));
+            if (parts.Length == 0 || !s_commands.TryGetValue(parts[0], out Command cmd)) return null;
+
+            bool admin = IsGameAdmin(sender);
+            if (cmd.Run == (Func<string[], string>)Help)
+                return "Commands: " + string.Join(", ", s_commands.Where(c => admin || !c.Value.Admin).Select(c => prefix + c.Value.Usage));
+            if (parts[0].Equals("restart", StringComparison.OrdinalIgnoreCase)) return ChatCommand(t, forDiscord: false);
+            if (cmd.Admin && !admin) return "That command is for admins only.";
+
+            string result = Execute(parts[0], parts.Skip(1).ToArray());
+            return Plain(result);
+        }
+
+        /// <summary>On the game's admin list (any ID form adminlist.txt accepts), or the player hosting the world.</summary>
+        private static bool IsGameAdmin(long sender)
+        {
+            if (ZNet.instance == null) return false;
+            if (!ZNet.instance.IsDedicated() && sender == ZNet.GetUID()) return true;
+            ZNetPeer peer = ZNet.instance.GetPeer(sender);
+            string host = peer?.m_socket?.GetHostName();
+            return !string.IsNullOrEmpty(host) && ZNet.instance.IsAdmin(host);
+        }
+
+        // Command answers are written for Discord: drop the bold, code marks and escapes for game chat
+        private static string Plain(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"\\([\\*_~`|>#\[\]()\-])", "$1");
+            return s.Replace("**", "").Replace("`", "").Replace("\n", "  ");
+        }
+
+        private static string NextRestart(string[] _)
+        {
+            DateTime next = Restarts.Next;
+            if (next == default) return "No restart is scheduled.";
+            long unix = (long)(next - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+            // Discord shows <t:...> in each reader's own time zone
+            return $"🔁 Next restart <t:{unix}:t> (<t:{unix}:R>).";
         }
 
         private static string Save(string[] _)

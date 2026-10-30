@@ -35,7 +35,7 @@ $manifest = [ordered]@{
     name           = "Cavemans_Discord_Bridge"
     version_number = $version
     website_url    = "https://github.com/TheCavemanOfficial/CavemansDiscordBridge"
-    description    = "Caveman's Discord Bridge: two-way Discord chat for your Valheim server, plus server status posts, a death feed and admin commands from Discord. Server-side; players don't need it."
+    description    = "Two-way Discord chat for your Valheim server, status posts, death feed, scheduled restarts, a live admin panel with buttons, admin commands, and reports on why players can't join. Server-side; players don't need it."
     dependencies   = @("denikson-BepInExPack_Valheim-5.4.2333")
 }
 [IO.File]::WriteAllText((Join-Path $stage "manifest.json"), ($manifest | ConvertTo-Json), $utf8NoBom)
