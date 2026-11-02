@@ -314,9 +314,16 @@ namespace CaveheimDiscordBridge
         {
             private static void Prefix(ZNet __instance, ZNetPeer peer)
             {
-                if (peer?.m_rpc == null || !__instance.IsServer() || !s_pending.TryGetValue(peer.m_rpc, out Pending p)) return;
+                if (peer?.m_rpc == null || !__instance.IsServer()) return;
+                if (!peer.m_characterID.IsNone())
+                {
+                    // They got in: only an AzuAntiCheat kick out of the world is worth a report
+                    s_pending.Remove(peer.m_rpc);
+                    QueueWorldKick(peer);
+                    return;
+                }
+                if (!s_pending.TryGetValue(peer.m_rpc, out Pending p)) return;
                 s_pending.Remove(peer.m_rpc);
-                if (!peer.m_characterID.IsNone()) return;   // they got in: nothing to report
                 // A moment for AzuAntiCheat's last lines about them to reach the log
                 s_toPost.Add((Time.realtimeSinceStartup + 3f, p));
             }
@@ -332,8 +339,74 @@ namespace CaveheimDiscordBridge
             }
         }
 
+        // ================================================================ kicked out of the world
+
+        private class WorldKick { public string Name, Host, Steam; public DateTime Left; }
+
+        private static readonly List<(float at, WorldKick k)> s_kicksToCheck = new List<(float, WorldKick)>();
+
+        // AzuAntiCheat can kick the same player dozens of times in a second (Nite, 2026-10-31: 26 at once); one post each
+        private static readonly Dictionary<string, DateTime> s_lastKickPost = new Dictionary<string, DateTime>();
+
+        private static void QueueWorldKick(ZNetPeer peer)
+        {
+            if (!HasAzuAntiCheat || S == null || (string.IsNullOrWhiteSpace(S.JoinReportChannelId.Value) && string.IsNullOrWhiteSpace(S.JoinReportWebhook.Value))) return;
+            AzuLog.Start();
+            var k = new WorldKick { Name = peer.m_playerName, Left = DateTime.UtcNow };
+            try { k.Host = peer.m_socket?.GetHostName() ?? ""; } catch { k.Host = ""; }
+            k.Steam = SteamAvatars.FromPlatformId(k.Host);
+            // A moment for AzuAntiCheat's last lines about them to reach the log
+            s_kicksToCheck.Add((Time.realtimeSinceStartup + 3f, k));
+        }
+
+        private static void PostWorldKick(WorldKick k)
+        {
+            List<string> azu = AzuLog.About(k.Left.AddSeconds(-30), DateTime.UtcNow, k.Host, k.Steam, k.Name, namedOnly: true);
+            if (!azu.Any(l => l.IndexOf("Kicking ", StringComparison.Ordinal) >= 0)) return;   // left on their own
+
+            string who = k.Steam ?? k.Host ?? k.Name ?? "";
+            if (s_lastKickPost.TryGetValue(who, out DateTime last) && DateTime.UtcNow - last < TimeSpan.FromMinutes(2)) return;
+            s_lastKickPost[who] = DateTime.UtcNow;
+
+            string name = string.IsNullOrEmpty(k.Name) ? "Unknown player" : k.Name;
+            AzuKick kick = AzuKick.From(azu);
+            int kicks = azu.Count(l => l.IndexOf("Kicking ", StringComparison.Ordinal) >= 0 && !l.Contains("\x1b"));
+            bool notSaved = azu.Any(l => l.IndexOf("Character will not be saved", StringComparison.Ordinal) >= 0);
+
+            var fields = new List<(string, string, bool)>
+            {
+                ("👤 Player", Discord.EscapeMarkdown(name), true),
+                ("🆔 ID", k.Steam != null ? $"[{k.Steam}](https://steamcommunity.com/profiles/{k.Steam})" : (k.Host.Length > 0 ? k.Host : "unknown"), true),
+                ("❓ Why", kick != null ? kick.Headline : "see the attached file", false),
+                ("💾 Character", notSaved ? "⚠️ **Not saved**: everything since their last save is gone (items, skills, boss keys)" : "Saved first", false),
+            };
+            if (kicks > 1) fields.Add(("🔁 Kicks", $"{kicks} in a row", true));
+            if (kick != null && kick.Items.Count > 0) fields.Add(("🔧 What to fix", Cap(kick.Items, 15), false));
+
+            string tag = (k.Steam ?? "player") + "_" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var files = new List<(string, string)> { ($"azuanticheat_{tag}.txt", string.Join("\n", azu.Select(AzuKick.Clean))) };
+            string json = EmbedJson($"👢 Kicked from the world: {name}", 0xE67E22, fields);
+            if (!string.IsNullOrWhiteSpace(S.JoinReportChannelId.Value)) Discord.BotWithFiles(S.JoinReportChannelId.Value, json, files);
+            else Discord.WebhookWithFiles(S.JoinReportWebhook.Value, json, files);
+            string reason = "Kicked from the world" + (kick != null ? ": " + kick.Headline : "");
+            CommandLog.Write("kick report", name + (k.Steam != null ? $" ({k.Steam})" : ""), reason, null);
+            DiscordBridgePlugin.Log.LogInfo($"Kick report posted for {name}: {reason}");
+        }
+
         internal static void Update()
         {
+            if (s_kicksToCheck.Count > 0)
+            {
+                float t = Time.realtimeSinceStartup;
+                for (int i = s_kicksToCheck.Count - 1; i >= 0; i--)
+                {
+                    if (t < s_kicksToCheck[i].at) continue;
+                    WorldKick k = s_kicksToCheck[i].k;
+                    s_kicksToCheck.RemoveAt(i);
+                    try { PostWorldKick(k); }
+                    catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Kick report failed: {ex}"); }
+                }
+            }
             if (s_toPost.Count == 0) return;
             float now = Time.realtimeSinceStartup;
             for (int i = s_toPost.Count - 1; i >= 0; i--)
@@ -708,13 +781,13 @@ namespace CaveheimDiscordBridge
             }
 
             /// <summary>Lines from that window that name the player (ID or name); all of the window's warnings if none do.</summary>
-            internal static List<string> About(DateTime from, DateTime to, string host, string steam, string name)
+            internal static List<string> About(DateTime from, DateTime to, string host, string steam, string name, bool namedOnly = false)
             {
                 List<string> window;
                 lock (s_lines) window = s_lines.Where(l => l.at >= from && l.at <= to).Select(l => l.text).ToList();
                 var keys = new[] { host, steam, name }.Where(k => !string.IsNullOrEmpty(k)).ToList();
                 List<string> named = window.Where(l => keys.Any(k => l.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
-                return named.Count > 0 ? named : window.Where(l => !l.StartsWith("[Info")).ToList();
+                return named.Count > 0 || namedOnly ? named : window.Where(l => !l.StartsWith("[Info")).ToList();
             }
 
             public void Dispose() { }

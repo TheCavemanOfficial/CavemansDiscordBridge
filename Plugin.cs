@@ -21,7 +21,7 @@ namespace CaveheimDiscordBridge
     {
         public const string ModGUID = "TheCaveman.CavemansDiscordBridge";
         public const string ModName = "Caveman's Discord Bridge";
-        public const string ModVersion = "1.1.0";
+        public const string ModVersion = "1.1.1";
 
         internal static DiscordBridgePlugin Instance;
         internal static ManualLogSource Log;

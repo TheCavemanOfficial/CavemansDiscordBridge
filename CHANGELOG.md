@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Kicks from the world are reported too. Until now only players who never got in were reported, so an AzuAntiCheat kick of someone already playing (such as a console cheat command) went nowhere. Now it posts one report to the player-error channel: who, why, how many kicks in a row, and whether AzuAntiCheat saved their character first. "Not saved" means everything since their last save is gone, including boss keys. A burst of kicks of the same player posts once, and players who just leave post nothing. Needs AzuAntiCheat; the bridge still only reads its log.
+
 ## 1.1.0
 
 - Scheduled restarts, replacing Tristan's ServerRestart. The settings are in the server config under `[5 - Restarts]`:
