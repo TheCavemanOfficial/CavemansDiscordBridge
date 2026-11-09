@@ -21,7 +21,7 @@ namespace CaveheimDiscordBridge
     {
         public const string ModGUID = "TheCaveman.CavemansDiscordBridge";
         public const string ModName = "Caveman's Discord Bridge";
-        public const string ModVersion = "1.1.1";
+        public const string ModVersion = "1.2.0";
 
         internal static DiscordBridgePlugin Instance;
         internal static ManualLogSource Log;
@@ -60,6 +60,7 @@ namespace CaveheimDiscordBridge
             if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
             {
                 EnsureServerSettings();
+                Notifications.CheckLastShutdown();
                 // The preloader (patchers/) normally sent it already, long before any mod loaded
                 if (!(AppDomain.CurrentDomain.GetData("CavemansDiscordBridge.LaunchSent") is bool sent && sent))
                     Notifications.ServerLaunching();
@@ -123,7 +124,7 @@ namespace CaveheimDiscordBridge
 
         public readonly ConfigEntry<string> NotifyWebhook;
         public readonly ConfigEntry<bool> IsServer;
-        public readonly ConfigEntry<bool> NotifyLaunch, NotifyStarted, NotifyStopping, NotifyStopped;
+        public readonly ConfigEntry<bool> NotifyLaunch, NotifyStarted, NotifyStopping, NotifyStopped, NotifyUnexpected;
         public readonly ConfigEntry<bool> NotifyJoin, NotifyLeave;
         public readonly ConfigEntry<bool> NotifyDeaths;
         public readonly ConfigEntry<string> DeathWebhook;
@@ -181,6 +182,8 @@ namespace CaveheimDiscordBridge
             NotifyStarted = cfg.Bind("3 - Notifications", "Server Online", true, "The world has loaded and players can join.");
             NotifyStopping = cfg.Bind("3 - Notifications", "Server Stopping", true, "The server has begun shutting down.");
             NotifyStopped = cfg.Bind("3 - Notifications", "Server Offline", true, "The server has stopped.");
+            NotifyUnexpected = cfg.Bind("3 - Notifications", "Unexpected Shutdown", true,
+                "At startup: the last session ended without a clean shutdown (a crash, or the host killed the process). Scheduled restarts and normal stops don't count.");
             NotifyJoin = cfg.Bind("3 - Notifications", "Player Joined", false, "A player joined the server.");
             NotifyLeave = cfg.Bind("3 - Notifications", "Player Left", false, "A player left the server.");
             NotifyDeaths = cfg.Bind("3 - Notifications", "Deaths", true,

@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
+using BepInEx;
 using HarmonyLib;
 
 namespace CaveheimDiscordBridge
@@ -16,9 +19,39 @@ namespace CaveheimDiscordBridge
             if (S.IsServer.Value && S.NotifyLaunch.Value) Discord.Webhook(S.NotifyWebhook.Value, "🟡 **Server is starting up…**");
         }
 
+        // Exists while the server runs and is removed on a clean shutdown. Still there at the next launch means the last
+        // session ended without one: a crash, or the host killing the process (AMP restarting it after a crash or a hang).
+        private static string MarkerPath => Path.Combine(Paths.BepInExRootPath, "CavemansDiscordBridge.running");
+
+        /// <summary>At launch: reports an unexpected end of the last session, then marks this one as running.</summary>
+        internal static void CheckLastShutdown()
+        {
+            if (!S.IsServer.Value) return;
+            try
+            {
+                if (File.Exists(MarkerPath))
+                {
+                    string since = File.ReadAllText(MarkerPath).Trim();
+                    DiscordBridgePlugin.Log.LogWarning($"The last server session (started {since}) ended without a clean shutdown.");
+                    if (S.NotifyUnexpected.Value)
+                        Discord.Webhook(S.NotifyWebhook.Value, "⚠️ **The server went down unexpectedly** (a crash, or it was killed) and has been restarted."
+                            + (since.Length > 0 ? $" The last session started {since}." : ""));
+                }
+                File.WriteAllText(MarkerPath, DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm") + " UTC");
+            }
+            catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Couldn't check the last shutdown: {ex.Message}"); }
+        }
+
+        private static void ClearMarker()
+        {
+            try { File.Delete(MarkerPath); }
+            catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Couldn't clear the running marker: {ex.Message}"); }
+        }
+
         internal static void ServerStopped()
         {
             if (!s_online || !S.IsServer.Value) return;
+            ClearMarker();
             s_online = false;
             CommandLog.FlushNow();
             AdminPanel.Offline();

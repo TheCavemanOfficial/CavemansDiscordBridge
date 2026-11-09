@@ -23,6 +23,7 @@ Built for my own server, Caveheim, and shared because it might be useful to your
 - 🟢 Online: the world has loaded and people can join.
 - 🟠 Shutting down
 - 🔴 Offline
+- ⚠️ Went down unexpectedly (posted when it's back up after a crash or a forced kill)
 - Optional: player joined and player left.
 
 **Death feed**
@@ -179,6 +180,7 @@ Right-click and **Copy ID** on:
 | Server Online | true | 🟢 Online |
 | Server Stopping | true | 🟠 Shutting down |
 | Server Offline | true | 🔴 Offline |
+| Unexpected Shutdown | true | ⚠️ At startup, when the last session ended without a clean shutdown: a crash, or the host killing the server. Scheduled restarts and normal stops don't count. |
 | Player Joined | false | When a player spawns in. |
 | Player Left | false | When a player disconnects. |
 | Deaths | true | The death feed (needs a death webhook). |

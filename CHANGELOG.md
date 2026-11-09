@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- Crash alerts. When the server comes back up after it went down without a clean shutdown (a crash, or the host killing it, like AMP restarting a crashed or frozen server), it posts "⚠️ The server went down unexpectedly" to the notification webhook, with when the last session started. Scheduled restarts and normal stops don't post it. Turn it off with `[3 - Notifications] Unexpected Shutdown`.
+
 ## 1.1.1
 
 - Kicks from the world are reported too. Until now only players who never got in were reported, so an AzuAntiCheat kick of someone already playing (such as a console cheat command) went nowhere. Now it posts one report to the player-error channel: who, why, how many kicks in a row, and whether AzuAntiCheat saved their character first. "Not saved" means everything since their last save is gone, including boss keys. A burst of kicks of the same player posts once, and players who just leave post nothing. Needs AzuAntiCheat; the bridge still only reads its log.
