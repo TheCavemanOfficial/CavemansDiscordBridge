@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\DiscordTls.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Reference Include="BepInEx"><HintPath>F:\Gale\valheim\profiles\CaveheimS3 Building\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Mono.Cecil"><HintPath>F:\Gale\valheim\profiles\CaveheimS3 Building\BepInEx\core\Mono.Cecil.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>

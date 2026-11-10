@@ -2,6 +2,7 @@
 
 ## 1.2.0
 
+- Discord keeps working when the server's certificate store breaks. On some Linux servers every connection to Discord failed with `CERTIFICATE_VERIFY_FAILED` for a whole session, until the next restart: no chat, no commands, no admin panel, no notices. The bridge now checks Discord's certificate against root certificates it carries itself (Google Trust Services and Let's Encrypt), only for Discord's own addresses and always with the name check, and logs one line when it had to. Its two requests at startup no longer go out at the same time, which is when the store broke. A failing poll logs its full error once, then one line each time.
 - Crash alerts. When the server comes back up after it went down without a clean shutdown (a crash, or the host killing it, like AMP restarting a crashed or frozen server), it posts "⚠️ The server went down unexpectedly" to the notification webhook, with when the last session started. Scheduled restarts and normal stops don't post it. Turn it off with `[3 - Notifications] Unexpected Shutdown`.
 
 ## 1.1.1

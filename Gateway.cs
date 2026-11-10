@@ -71,6 +71,8 @@ namespace CaveheimDiscordBridge
             using (var session = CancellationTokenSource.CreateLinkedTokenSource(s_stop.Token))
             {
                 s_socket = socket;
+                try { socket.Options.RemoteCertificateValidationCallback = (sender, cert, chain, errors) => DiscordTls.Validate("gateway.discord.gg", cert, chain, errors); }
+                catch (Exception) { }   // Mono may not support it; DiscordTls.InstallGlobal covers that
                 socket.ConnectAsync(new Uri(Url), session.Token).GetAwaiter().GetResult();
 
                 long? seq = null;

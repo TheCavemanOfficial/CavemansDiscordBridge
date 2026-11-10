@@ -29,6 +29,9 @@ namespace CaveheimDiscordBridge
         }
 
         internal static HttpClient s_http;
+        private static int s_pollTraced;
+
+        private static string Innermost(Exception ex) { while (ex.InnerException != null) ex = ex.InnerException; return ex.Message; }
         private static readonly BlockingCollection<Outgoing> s_queue = new BlockingCollection<Outgoing>(500);
         private static Thread s_sender, s_poller;
         private static volatile bool s_running;
@@ -40,7 +43,9 @@ namespace CaveheimDiscordBridge
         {
             if (s_running) return;
             ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            s_http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            DiscordTls.Log = m => DiscordBridgePlugin.Log.LogWarning(m.Replace("[Caveman's Discord Bridge] ", ""));
+            DiscordTls.InstallGlobal();
+            s_http = DiscordTls.NewClient(TimeSpan.FromSeconds(15));
             s_http.DefaultRequestHeaders.UserAgent.ParseAdd($"DiscordBot (https://github.com/TheCavemanOfficial/CavemansDiscordBridge, {DiscordBridgePlugin.ModVersion})");
             s_running = true;
             s_sender = new Thread(SendLoop) { IsBackground = true, Name = "DiscordBridge sender" };
@@ -322,7 +327,7 @@ namespace CaveheimDiscordBridge
                     }
                 }
                 catch (Exception ex) when (!s_running) { _ = ex; return; }   // cancelled at shutdown
-                catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning($"Discord poll failed: {ex}"); seconds = Math.Max(seconds, 10f); }
+                catch (Exception ex) { DiscordBridgePlugin.Log.LogWarning(s_pollTraced++ == 0 ? $"Discord poll failed: {ex}" : $"Discord poll failed: {Innermost(ex)}"); seconds = Math.Max(seconds, 10f); }
                 s_stop.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(seconds));
             }
         }

@@ -20,6 +20,10 @@ namespace CaveheimDiscordBridge.Preloader
     public static class EarlyLaunchNotice
     {
         public const string SentFlag = "CavemansDiscordBridge.LaunchSent";
+
+        // One handshake at a time: on both boots where Mono's certificate store broke for the whole session, these two
+        // requests had raced each other as the very first TLS in the process
+        private static readonly object s_tlsGate = new object();
         public const string PanelFlag = "CavemansDiscordBridge.PanelStartingSent";
 
         public static IEnumerable<string> TargetDLLs { get; } = new string[0];
@@ -49,7 +53,8 @@ namespace CaveheimDiscordBridge.Preloader
                 {
                     try
                     {
-                        using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
+                        lock (s_tlsGate)
+                    using (var http = DiscordTls.NewClient(TimeSpan.FromSeconds(15)))
                             http.PostAsync(url.Trim(), new StringContent(json, Encoding.UTF8, "application/json")).GetAwaiter().GetResult().Dispose();
                     }
                     catch (Exception ex) { Console.WriteLine($"[Caveman's Discord Bridge] Early launch notice failed: {ex.Message}"); }
@@ -82,7 +87,8 @@ namespace CaveheimDiscordBridge.Preloader
             {
                 try
                 {
-                    using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) })
+                    lock (s_tlsGate)
+                    using (var http = DiscordTls.NewClient(TimeSpan.FromSeconds(15)))
                     using (var request = new HttpRequestMessage(new HttpMethod("PATCH"), url))
                     {
                         request.Headers.TryAddWithoutValidation("Authorization", "Bot " + token.Trim());
